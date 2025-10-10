@@ -1,0 +1,371 @@
+---
+title: "Desafio 02 - REDES NEURAIS ARTIFICIAIS (APRENDIZADO PROFUNDO)"
+author: "Hanna Tatsuta Galassi"
+date: "2025-10-07"
+format:
+  pdf:
+    documentclass: article
+    toc: true
+    number-sections: true
+    colorlinks: true
+    geometry:
+      - margin=1in
+    echo: false
+    warning: false
+    standalone: true
+---
+
+```{python}
+import warnings
+from PIL import Image
+import itertools
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*retracing.*')
+tf.keras.utils.disable_interactive_logging()
+```
+
+```{python}
+# Dicionário com os nomes e caminhos dos arquivos de imagem dos dígitos
+digits_to_classify = {
+    "Dígito 0": "digito0_hanna.png",
+    "Dígito 1": "digito1_hanna.png",
+    "Dígito 2": "digito2_hanna.png",
+    "Dígito 3": "digito3_hanna.png",
+    "Dígito 4": "digito4_hanna.png",
+    "Dígito 5": "digito5_hanna.png",
+    "Dígito 6": "digito6_hanna.png",
+    "Dígito 7": "digito7_hanna.png",
+    "Dígito 8": "digito8_hanna.png",
+    "Dígito 9": "digito9_hanna.png"
+}
+```
+
+# Modelo MLP (Multi-Layer Perceptron)
+## Metodologia
+O treinamento do modelo MLP foi realizado utilizando o dataset MNIST. As imagens originalmente tinham tamanho 28x28 pixels, e foram pré-processadas para um vetor de 784 pixels, e normalizadas para o intervalo entre 0 e 1.
+
+Para otimizar o processo de treinamento e evitar *overfitting*, foram implementados dois *callbacks*
+
+- Early Stopping: o treinamento é interrompido automaticamente se a perda no conjunto de validação não apresentar melhora por 10 épocas consecutivas;
+- Taxa de aprendizado adaptativa: a taxa de aprendizado é reduzida pela metade caso a perda no conjunto de validação não melhore após 5 épocas
+
+Foram simuladas 5 topologias distintas para identificas a arquitetura com melhor performance: 
+
+1. 1 camada oculta com 512 neurônios e ativação ReLu;
+2. 1 camada oculta com 32 neurônios e ativação ReLu;
+3. 2 camadas ocultas com 128 e 64 neurônios, ambas com ativação ReLu;
+4. 2 camadas ocultas, a primeira com 128 neurônios com ativação tanh e a segunda com 64 neurônios com ativação ReLu;
+5. 3 camadas ocultas com 512, 256 e 128 neurônios, todas com ativação ReLu.
+
+
+## Resultados da simulação
+```{python}
+# Carrega e pré-processa os dados para o MLP
+(train_images, train_labels), (test_images, test_labels) = mnist.load_data()
+train_images = train_images.reshape((60000, 28 * 28)).astype('float32') / 255
+test_images = test_images.reshape((10000, 28 * 28)).astype('float32') / 255
+train_labels_cat = to_categorical(train_labels)
+test_labels_cat = to_categorical(test_labels)
+
+# Definição dos Callbacks
+early_stopping = EarlyStopping(
+    monitor='val_loss', patience=10, restore_best_weights=True, verbose=1,
+    mode='min')
+reduce_lr = ReduceLROnPlateau(
+    monitor='val_loss', factor=0.5, patience=5, min_lr=0.0001, verbose=1,
+    mode='min')
+callbacks_list = [early_stopping, reduce_lr]
+
+# Definição das Topologias para Simulação
+topologies = {
+    "01 (512-relu)": [(512, 'relu')],
+    "02 (32-relu)": [(32, 'relu')],
+    "03 (128-relu, 64-relu)": [(128, 'relu'), (64, 'relu')],
+    "04 (128-tanh, 64-relu)": [(128, 'tanh'), (64, 'relu')],
+    "05 (512-relu, 256-relu, 128-relu)": [
+        (512, 'relu'), (256, 'relu'), (128, 'relu')]
+}
+
+results_summary = {}
+epochs = 100
+batch_size = 128
+
+# Simulação de Treinamento
+for name, layers in topologies.items():
+    print(f"\n--- Topologia {name} ---")
+    model = Sequential()
+    model.add(Dense(
+        units=layers[0][0], activation=layers[0][1], input_shape=(28 * 28,)))
+    for units, activation in layers[1:]:
+        model.add(Dense(units=units, activation=activation))
+    model.add(Dense(units=10, activation='softmax'))
+
+    model.compile(
+        optimizer='rmsprop', loss='categorical_crossentropy',
+        metrics=['accuracy'])
+    
+    history = model.fit(
+        train_images, train_labels_cat, epochs=epochs, batch_size=batch_size,
+        validation_data=(test_images, test_labels_cat),
+        callbacks=callbacks_list, verbose=0)
+    
+    loss, accuracy = model.evaluate(test_images, test_labels_cat, verbose=0)
+    print(f"Acurácia de Validação Final: {accuracy:.4f}")
+    results_summary[name] = accuracy
+
+best_mlp_model = Sequential([
+    Dense(512, activation='relu', input_shape=(28 * 28,)),
+    Dense(10, activation='softmax')
+])
+best_mlp_model.compile(
+    optimizer='rmsprop', loss='categorical_crossentropy', metrics=['accuracy'])
+best_mlp_model.fit(
+    train_images, train_labels_cat, epochs=50, batch_size=128,
+    validation_data=(test_images, test_labels_cat),
+    callbacks=callbacks_list, verbose=1)
+```
+
+Dentre as topologias simuladas, a melhor foi a #1 (1 camada oculta, 512 neurônios, função de ativação ReLu).
+
+## Classifição de novo conjunto de dígitos
+
+```{python}
+def classify_digit_mlp(img_path, model):
+    """
+    Carrega, pré-processa e classifica a imagem do dígito para o modelo MLP.
+    """
+    img = Image.open(img_path).convert('L').resize((28, 28))
+    img_tensor = np.array(img, dtype='float32')
+    img_tensor /= 255.0
+    if np.mean(img_tensor) > 0.5:
+        img_tensor = 1.0 - img_tensor
+    x = img_tensor.reshape((1, 28 * 28))
+    prediction = model.predict(x)
+    saida = np.argmax(prediction, axis=1)[0]
+    return img_tensor, saida, prediction[0]
+
+# Classificação dos dígitos
+results_mlp = []
+for name, path in digits_to_classify.items():
+    try:
+        img_array, classification, probabilities = classify_digit_mlp(
+            path, best_mlp_model)
+        results_mlp.append(
+            (name, path, img_array, classification, probabilities))
+    except FileNotFoundError:
+        print(f"ERRO: Arquivo {path} não encontrado")
+        results_mlp.append((name, path, None, "N/A", "N/A"))
+
+# Apresentação dos resultados
+num_digits = len(results_mlp)
+if num_digits > 0:
+    fig, axes = plt.subplots(3, 4, figsize=(20, 10))
+    
+    # Aplaina o array de eixos para facilitar a iteração
+    axes = axes.flatten()
+
+    for i, (
+            name, path, img_array, classification, probabilities
+            ) in enumerate(results_mlp):
+        if i < len(axes) and img_array is not None:
+            ax = axes[i]
+            # Apresenta a Imagem (já pré-processada, fundo preto)
+            ax.imshow(img_array, cmap='gray_r')
+            ax.axis('off')
+
+            ax.set_title(
+                f"Predição: {classification}\n"
+                f"Probabilidade: {probabilities[classification]:.4f}",
+                fontsize=30
+            )
+
+    for j in range(num_digits, len(axes)):
+        axes[j].axis('off')
+
+    plt.tight_layout(pad=3.0) 
+    plt.show()
+
+# print("\nRESUMO DA CLASSIFICAÇÃO:")
+# for name, path, _, classification, probabilities in results_mlp:
+#     if classification != "N/A":
+#         print(f"\n- {name} ({path}):")
+#         print(f"  -> Classificado como: {classification}")
+#         print(f"  -> Probabilidade Máxima (Classe {classification}): {probabilities[classification]:.4f}")
+#     else:
+#         print(
+#             f"\n- {name} ({path}): Não classificado devido a erro no arquivo.")
+```
+
+O modelo obteve sucesso em apenas 3 das 10 imagens,o que indica dificuldade em generalizar para dados fora do padrão do dataset de treinamento, mesmo com alta acurácia de validação.
+
+
+# Modelo CNN (Rede Neural Convolucional)
+
+## Metodologia
+Para o modelo CNN, o pré-processamento dos dados foi diferente. As imagens foram remodeladas paraum formato 4D (60000, 28, 28, 1), que preserva a estrutura espacial 2D da imagem. Os mesmos callbacks da etapa anterior foram utilizados.
+
+Foram testadas 3 topologias CNN:
+1. 2 camadas convolucionais seguidas por uma camada densa de 64 neurônios;
+2. 3 camadas convolucionais e uma camada densa de 64 neurônios;
+3. 2 camadas convolucionais e uma camada densa de 128 neurônios
+
+## Resultados da simulação
+A performance de cada topologia CNN é apresentada a seguir:
+
+```{python}
+# Pré-processamento dos dados para CNN
+(train_images_cnn, train_labels_cnn), (test_images_cnn, test_labels_cnn) = \
+    mnist.load_data()
+train_images_cnn = train_images_cnn.reshape(
+    (60000, 28, 28, 1)).astype('float32') / 255
+test_images_cnn = test_images_cnn.reshape(
+    (10000, 28, 28, 1)).astype('float32') / 255
+train_labels_cnn_cat = to_categorical(train_labels_cnn)
+test_labels_cnn_cat = to_categorical(test_labels_cnn)
+
+# Topologias CNN
+cnn_topologies = {
+    "01 (2Conv-64Dense)": [
+        (32, (3, 3), (2, 2)), (64, (3, 3), (2, 2)), (64, 'relu')
+    ],
+    "02 (3Conv-64Dense)": [
+        (32, (3, 3), (2, 2)), (64, (3, 3), (2, 2)), (64, (3, 3), None),
+        (64, 'relu')
+    ],
+    "03 (2Conv-128Dense)": [
+        (32, (3, 3), (2, 2)), (64, (3, 3), (2, 2)), (128, 'relu')
+    ]
+}
+
+results_cnn_summary = {}
+# Simulação de Treinamento
+for name, layers in cnn_topologies.items():
+    print(f"\n--- Treinando Topologia CNN: {name} ---")
+    model_cnn = Sequential()
+    dense_units, dense_activation = 0, ''
+    
+    # Adiciona camadas convolucionais e de pooling
+    for i, layer_params in enumerate(layers):
+        if len(layer_params) == 3:
+            filters, kernel_size, pool_size = layer_params
+            input_shape = (28, 28, 1) if i == 0 else None
+            model_cnn.add(
+                Conv2D(filters, kernel_size, activation='relu',
+                input_shape=input_shape))
+            if pool_size:
+                model_cnn.add(MaxPooling2D(pool_size=pool_size))
+        elif len(layer_params) == 2:
+            dense_units, dense_activation = layer_params
+    
+    # Adiciona classificador
+    model_cnn.add(Flatten())
+    model_cnn.add(Dense(units=dense_units, activation=dense_activation))
+    model_cnn.add(Dense(units=10, activation='softmax'))
+
+    model_cnn.compile(
+        optimizer='rmsprop', loss='categorical_crossentropy',
+        metrics=['accuracy'])
+    model_cnn.fit(
+        train_images_cnn, train_labels_cnn_cat, epochs=100, batch_size=64,
+        validation_data=(test_images_cnn, test_labels_cnn_cat),
+        callbacks=callbacks_list, verbose=0)
+    
+    loss, accuracy = model_cnn.evaluate(
+        test_images_cnn, test_labels_cnn_cat, verbose=0)
+    print(f"Acurácia de Validação Final: {accuracy:.4f}")
+    results_cnn_summary[name] = accuracy
+
+best_cnn_model = model_cnn
+```
+
+A melhor topologia CNN foi a #2, composta por três camadas convolucionais. Ela apresentou uma acurácia de validação mais alta que o melhor modelo MLP.
+
+## Classificação de novos dígitos
+O melhor modelo CNN foi então usado para classificar os mesmos 10 dígitos manuscritos:
+```{python}
+def classify_digit_cnn(img_path, model):
+    """
+    Carrega, pré-processa e classifica a imagem do dígito para o modelo CNN.
+    """
+    img = Image.open(img_path).convert('L').resize((28, 28))
+    img_tensor = np.array(img, dtype='float32') / 255.0
+    if np.mean(img_tensor) > 0.5:
+        img_tensor = 1.0 - img_tensor
+    x = img_tensor.reshape((1, 28, 28, 1))
+    prediction = model.predict(x, verbose=0)
+    classification = np.argmax(prediction, axis=1)[0]
+    return img_tensor, classification, prediction[0]
+
+# Classificação dos dígitos
+results_cnn = []
+for name, path in digits_to_classify.items():
+    try:
+        img_array, classification, probabilities = classify_digit_cnn(
+            path, best_cnn_model)
+        results_cnn.append(
+            (name, path, img_array, classification, probabilities))
+    except FileNotFoundError:
+        print(f"ERRO: Arquivo {path} não encontrado")
+        results_cnn.append((name, path, None, "N/A", "N/A"))
+
+# Apresentação dos resultados CNN
+num_digits = len(results_cnn)
+if num_digits > 0:
+    fig, axes = plt.subplots(3, 4, figsize=(20, 10))
+    axes = axes.flatten()
+
+    for i, (
+            name, path, img_array, classification, probabilities
+            ) in enumerate(results_cnn):
+        if img_array is not None:
+            # Now axes[i] correctly refers to a single subplot
+            axes[i].imshow(img_array, cmap='gray_r')
+            axes[i].axis('off')
+
+            axes[i].set_title(
+                f"Predição: {classification}\n"
+                f"Probabilidade: {probabilities[classification]:.4f}",
+                fontsize=20 # Reduced fontsize for better fit
+            )
+            
+    # This loop hides any unused subplots in the grid
+    for j in range(num_digits, len(axes)):
+        axes[j].axis('off')
+
+    plt.tight_layout(pad=3.0) 
+    plt.show()
+
+# # Resumo em texto
+# print("\nRESUMO DA CLASSIFICAÇÃO CNN:")
+# for name, path, _, classification, probabilities in results_cnn:
+#     if classification != "N/A":
+#         print(f"\n- {name} ({path}):")
+#         print(f"  -> Classificado como: {classification}")
+#         print(f"  -> Probabilidade Máxima (Classe {classification}): {probabilities[classification]:.4f}")
+#     else:
+#         print(
+#             f"\n- {name} ({path}): Não classificado devido a erro no arquivo.")
+```
+
+O modelo classificou corretamente 4 dos 10 dígitos. Embora esse resultado seja levemente melhor do que o do modelo MLP, ainda é um desempenho ruim nesse contexto de realizar a classificação de um conjunto de dados novo e com variações de estilo.
+
+# Discussão: vantagens e desvantagens das CNNs
+As Redes Neurais Convolucionais (CNNs) são amplamente utilizadas em tarefas de visão computacional. Sua eficácia deriva de premissas sobre a natureza dos dados de imagem, o que lhes confere vantagens e desvantagens específicas quando comparadas a arquiteturas mais genéricas como o MLP.
+
+## Vantagens das CNNs
+- Eficiência de Parâmetros via Compartilhamento de Pesos: O princípio do compartilhamento de pesos permite que um mesmo conjunto de filtros seja aplicado a diferentes regiões da imagem de entrada. Isso reduz drasticamente o número de parâmetros treináveis em comparação com uma camada densa de um MLP, diminuindo a complexidade do modelo e, consequentemente, a propensão ao overfitting.
+- Preservação da Estrutura Espacial e Conectividade Local: Diferente dos MLPs, que exigem o achatamento (flattening) do dado de entrada e perdem a informação topológica, as CNNs processam as imagens em sua estrutura 2D. A conectividade local, onde cada neurônio se conecta apenas a um pequeno campo receptivo, garante a preservação das relações espaciais entre pixels, o que é fundamental para a análise de imagens.
+- Extração de Características Hierárquicas: A composição de múltiplas camadas convolucionais permite que a rede aprenda uma hierarquia de características. As camadas iniciais tipicamente aprendem a detectar padrões de baixo nível, como bordas e texturas. As camadas subsequentes combinam essas informações para identificar padrões mais complexos e abstratos (e.g., formas, partes de objetos), criando representações de dados cada vez mais ricas.
+
+## Desvantagens das CNNs
+- Elevado Custo Computacional: Embora eficientes em parâmetros, as operações de convolução são computacionalmente intensivas. O treinamento de CNNs profundas é significativamente mais lento que o de MLPs, o que dificulta sua utilização quando não se tem acesso a computadores com especificações robustas.
+- Complexidade no Design da Arquitetura: A performance de uma CNN é altamente sensível a um grande conjunto de hiperparâmetros, incluindo a profundidade da rede, o tamanho do kernel, o passo (stride), o preenchimento (padding) e o tipo de camada de agrupamento (pooling). O projeto de uma topologia ótima é um processo empírico, não trivial, que exige extensive experimentação.
